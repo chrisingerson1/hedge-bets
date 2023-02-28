@@ -14,6 +14,7 @@ ODDS_FORMAT = os.getenv('ODDS_FORMAT')
 US_Books = ["barstool", "betonlineag", "betfair", "betmgm", "betrivers", "betus", "bovada",
             "circasports", "draftkings", "fanduel", "foxbet", "lowvig", "mybookieag", "pointsbetus",
             "sugarhouse", "superbook", "twinspires", "unibet_us", "williamhill_us", "wynnbet"]
+
 MA_Books = ["barstool", "betmgm", "draftkings", "fanduel", "williamhill_us", "wynnbet"]
 
 def getResponse(sport, markets):
