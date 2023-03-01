@@ -10,6 +10,7 @@ load_dotenv()
 API_KEY = os.getenv('API_KEY')
 REGIONS = os.getenv('REGIONS')
 ODDS_FORMAT = os.getenv('ODDS_FORMAT')
+DATE_FORMAT = os.getenv('DATE_FORMAT')
 
 US_Books = ["barstool", "betonlineag", "betfair", "betmgm", "betrivers", "betus", "bovada",
             "circasports", "draftkings", "fanduel", "foxbet", "lowvig", "mybookieag", "pointsbetus",
@@ -17,13 +18,104 @@ US_Books = ["barstool", "betonlineag", "betfair", "betmgm", "betrivers", "betus"
 
 MA_Books = ["barstool", "betmgm", "draftkings", "fanduel", "williamhill_us", "wynnbet"]
 
-def getResponse(sport, markets):
+ALL_ML_SPORTS = [
+    'americanfootball_ncaaf',
+    'americanfootball_xfl',
+    'aussierules_afl',
+    'basketball_euroleague',
+    'basketball_nba',
+    'basketball_ncaab',
+    'cricket_ipl',
+    'cricket_odi',
+    'cricket_psl',
+    'icehockey_nhl',
+    'icehockey_sweden_allsvenskan',
+    'icehockey_sweden_hockey_league',
+    'mma_mixed_martial_arts',
+    ]
+
+ALL_SPORTS = [
+    'americanfootball_ncaaf',
+    'americanfootball_xfl',
+    'aussierules_afl',
+    'basketball_euroleague',
+    'basketball_nba',
+    'basketball_ncaab',
+    'cricket_ipl',
+    'cricket_odi',
+    'cricket_psl',
+    'cricket_test_match',
+    'icehockey_nhl',
+    'icehockey_sweden_allsvenskan',
+    'icehockey_sweden_hockey_league',
+    'mma_mixed_martial_arts',
+    'rugbyleague_nrl',
+    'soccer_argentina_primera_division',
+    'soccer_australia_aleague',
+    'soccer_austria_bundesliga',
+    'soccer_belgium_first_div',
+    'soccer_chile_campeonato',
+    'soccer_conmebol_copa_libertadores',
+    'soccer_denmark_superliga',
+    'soccer_efl_champ',
+    'soccer_england_league1',
+    'soccer_england_league2',
+    'soccer_epl',
+    'soccer_fa_cup',
+    'soccer_france_ligue_one',
+    'soccer_france_ligue_two',
+    'soccer_germany_bundesliga',
+    'soccer_germany_bundesliga2',
+    'soccer_germany_liga3',
+    'soccer_greece_super_league',
+    'soccer_italy_serie_a',
+    'soccer_italy_serie_b',
+    'soccer_japan_j_league',
+    'soccer_korea_kleague1',
+    'soccer_league_of_ireland',
+    'soccer_mexico_ligamx',
+    'soccer_netherlands_eredivisie',
+    'soccer_norway_eliteserien',
+    'soccer_poland_ekstraklasa',
+    'soccer_portugal_primeira_liga',
+    'soccer_spain_la_liga',
+    'soccer_spain_segunda_division',
+    'soccer_spl',
+    'soccer_sweden_allsvenskan',
+    'soccer_sweden_superettan',
+    'soccer_switzerland_superleague',
+    'soccer_turkey_super_league',
+    'soccer_uefa_champs_league',
+    'soccer_uefa_europa_conference_league',
+    'soccer_uefa_europa_league',
+    'soccer_uefa_nations_league',
+    'soccer_usa_mls'
+    ]
+
+TOP_SPORTS_ML = [
+    'basketball_nba',
+    'basketball_ncaab',
+    'icehockey_nhl'
+    ]
+TOP_SPORTS = TOP_SPORTS_ML + ['soccer_epl']
+
+def getScoresResponse(sport, markets):
     return requests.get('https://api.the-odds-api.com/v4/sports/' + sport + '/odds/',
                             params={
                                 'api_key': API_KEY,
                                 'regions': REGIONS,
                                 'markets': markets,
-                                'oddsFormat': ODDS_FORMAT})
+                                'oddsFormat': ODDS_FORMAT,
+                                'dateFormat': DATE_FORMAT})
+
+def getEventResponse(sport, eventId, markets):
+    return requests.get('https://api.the-odds-api.com/v4/sports/' + sport + '/events/' + eventId + '/odds/',
+                            params={
+                                'api_key': API_KEY,
+                                'regions': REGIONS,
+                                'markets': markets,
+                                'oddsFormat': ODDS_FORMAT,
+                                'dateFormat': DATE_FORMAT})
 
 def processML(book, outcomes, teams, bestBook, bestResults):
     homeIdx = 0 if teams['home'] == (outcomes[0])['name'] else 1
@@ -107,13 +199,13 @@ def processTotal(currentBook, outcomes, bestBook, bestResults, pointsList):
 
     return bestResults
 
-def processData(sports, booksList, live):
+def processScoreData(sports, booksList, live):
     validResults = []
     currentTime = datetime.datetime.now(timezone.utc)
 
     for sport in sports:
         for game in sport.json():
-            startTime = datetime.datetime.strptime(game['commence_time'],"%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.UTC)
+            startTime = datetime.datetime.strptime(game['commence_time'], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.UTC)
 
             if currentTime > startTime and ~live:
                 continue
@@ -210,7 +302,7 @@ def processData(sports, booksList, live):
                     favorite = min((over[i])['odds'], (under[i])['odds'])
                     underdog = max((over[i])['odds'], (under[i])['odds'])
 
-                    if abs(favorite) > underdog:
+                    if abs(favorite) < underdog:
                         validResults.append({
                             'sport': game['sport_title'],
                             'date': startTime,
@@ -227,46 +319,31 @@ def processData(sports, booksList, live):
     return validResults
 
 def main():
-    sportsList = []
-    sportsList.append(getResponse('basketball_nba', 'h2h,spreads,totals'))
-    sportsList.append(getResponse('basketball_ncaab', 'h2h,spreads,totals'))
-    sportsList.append(getResponse('baseball_mlb', 'h2h,spreads,totals'))
-    sportsList.append(getResponse('icehockey_nhl', 'h2h,spreads,totals'))
+    scoresList = []
+    for sport in TOP_SPORTS_ML:
+        scoresList.append(getScoresResponse(sport, 'h2h'))
+    for sport in TOP_SPORTS:
+        scoresList.append(getScoresResponse(sport, 'spreads'))
+        scoresList.append(getScoresResponse(sport, 'totals'))
 
-    requestsRemaining = sportsList[-1].headers['X-Requests-Remaining']
+    if len(scoresList) == 0:
+        return
 
-    validResults = processData(sportsList, MA_Books, False)
+    validScoreResults = processScoreData(scoresList, US_Books, True)
 
-    if (validResults):
-        for res in validResults:
+    if (validScoreResults):
+        for res in validScoreResults:
             if 'homePoints' in res.keys() and 'awayPoints' in res.keys():
-                print(res['sport'] + " " + res['homeTeam'] + ":", res['homePoints'], res['homeOdds'], "(" + res['homeBook'] + ") vs. " + res['awayTeam'] + ":", res['awayPoints'], res['awayOdds'], "(" + res['awayBook'] + ")")
+                print(res['sport'], "~", res['homeTeam'] + ":", res['homePoints'], res['homeOdds'], "(" + res['homeBook'] + ") vs. " + res['awayTeam'] + ":", res['awayPoints'], res['awayOdds'], "(" + res['awayBook'] + ")")
             elif 'overPoints' in res.keys() and 'underPoints' in res.keys():
-                print(res['sport'], res['homeTeam'], "vs.", res['awayTeam'] + ": o" + str(res["overPoints"]), res["overOdds"], "(" + res["overBook"] + "), u" + str(res["underPoints"]), res["underOdds"], "(" + res["underBook"] + ")")
+                print(res['sport'], "~", res['homeTeam'], "vs.", res['awayTeam'] + ": o" + str(res["overPoints"]), res["overOdds"], "(" + res["overBook"] + "), u" + str(res["underPoints"]), res["underOdds"], "(" + res["underBook"] + ")")
             else:
-                print(res['sport'] + " " + res['homeTeam'] + ":", res['homeOdds'], "(" + res['homeBook'] + ") vs. " + res['awayTeam'] + ":", res['awayOdds'], "(" + res['awayBook'] + ")")
+                print(res['sport'], "~", res['homeTeam'] + ":", res['homeOdds'], "(" + res['homeBook'] + ") vs. " + res['awayTeam'] + ":", res['awayOdds'], "(" + res['awayBook'] + ")")
     else:
         print("No opportunities for hedge betting today")
 
-    print("API calls remaining: " + requestsRemaining)
+    requestsRemaining = scoresList[-1].headers['X-Requests-Remaining']
+    print("API calls remaining:", int(float(requestsRemaining)))
 
 if __name__ == "__main__":
     main()
-
-### RESPONSE JSON FORMAT ###
-#id
-#sport_key
-#sport_title
-#commence_time
-#home_team
-#away_team
-#bookmakers
-#   key
-#   title
-#   last_update
-#   markets
-#       key
-#       last_update
-#       outcomes
-#           name
-#           price
