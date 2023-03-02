@@ -6,11 +6,17 @@ from datetime import timezone
 import datetime
 import pytz
 
+import math
+
 load_dotenv()
 API_KEY = os.getenv('API_KEY')
 REGIONS = os.getenv('REGIONS')
 ODDS_FORMAT = os.getenv('ODDS_FORMAT')
 DATE_FORMAT = os.getenv('DATE_FORMAT')
+
+LOG_ALL_RESULTS = os.getenv('LOG_ALL_RESULTS') == 'True'
+
+INITIAL_MONEY = 1000
 
 US_Books = ["barstool", "betonlineag", "betfair", "betmgm", "betrivers", "betus", "bovada",
             "circasports", "draftkings", "fanduel", "foxbet", "lowvig", "mybookieag", "pointsbetus",
@@ -18,10 +24,11 @@ US_Books = ["barstool", "betonlineag", "betfair", "betmgm", "betrivers", "betus"
 
 MA_Books = ["barstool", "betmgm", "draftkings", "fanduel", "williamhill_us", "wynnbet"]
 
-ALL_ML_SPORTS = [
+ALL_SPORTS_ML = [
     'americanfootball_ncaaf',
     'americanfootball_xfl',
     'aussierules_afl',
+    'baseball_mlb',
     'basketball_euroleague',
     'basketball_nba',
     'basketball_ncaab',
@@ -38,6 +45,7 @@ ALL_SPORTS = [
     'americanfootball_ncaaf',
     'americanfootball_xfl',
     'aussierules_afl',
+    'baseball_mlb',
     'basketball_euroleague',
     'basketball_nba',
     'basketball_ncaab',
@@ -93,11 +101,24 @@ ALL_SPORTS = [
     ]
 
 TOP_SPORTS_ML = [
+    'baseball_mlb',
     'basketball_nba',
     'basketball_ncaab',
     'icehockey_nhl'
     ]
 TOP_SPORTS = TOP_SPORTS_ML + ['soccer_epl']
+
+def decimalOdds(odds):
+    return 1 + 100/math.fabs(odds) if odds < 0 else 1 + odds/100.0
+
+def calculateROI(oddsA, oddsB):
+    oddsA_decimal = decimalOdds(oddsA)
+    oddsB_decimal = decimalOdds(oddsB)
+    oddsA_wager = round((oddsB_decimal / (oddsA_decimal + oddsB_decimal)) * INITIAL_MONEY, 2)
+    oddsB_wager = round(INITIAL_MONEY - oddsA_wager, 2)
+    ROI = round(((((oddsA_wager*oddsA_decimal) / float(INITIAL_MONEY)) - 1) * 100), 2)
+
+    return oddsA_wager, oddsB_wager, ROI
 
 def getScoresResponse(sport, markets):
     return requests.get('https://api.the-odds-api.com/v4/sports/' + sport + '/odds/',
@@ -250,18 +271,24 @@ def processScoreData(sports, booksList, live):
                             bestResults['totals'] = processTotal(book['title'], market['outcomes'], bestBook['total'], bestResults['total'], pointsList['total'])
 
             if ((bestResults['ml'])['hasData']):
-                if (abs((bestResults['ml'])['favorite']) < (bestResults['ml'])['underdog']):
-                    homeOdds = ((bestBook['ml'])['home'])['odds']
-                    awayOdds = ((bestBook['ml'])['away'])['odds']
+                homeOdds = ((bestBook['ml'])['home'])['odds']
+                awayOdds = ((bestBook['ml'])['away'])['odds']
+                homeWager, awayWager, ROI = calculateROI(homeOdds, awayOdds)
+
+                if ROI > 0 or LOG_ALL_RESULTS:
                     validResults.append({
                         'sport': game['sport_title'],
                         'date': startTime,
                         'homeTeam': teams['home'],
                         'homeBook': ((bestBook['ml'])['home'])['book'],
                         'homeOdds': str(homeOdds) if homeOdds < 0 else '+' + str(homeOdds),
+                        'wagerA': '$' + str(homeWager),
                         'awayTeam': teams['away'],
                         'awayBook': ((bestBook['ml'])['away'])['book'],
-                        'awayOdds': str(awayOdds) if awayOdds < 0 else '+' + str(awayOdds),})
+                        'awayOdds': str(awayOdds) if awayOdds < 0 else '+' + str(awayOdds),
+                        'wagerB': '$' + str(awayWager),
+                        'ROI': ROI
+                    })
 
             if ((bestResults['spread'])['hasData']):
                 home = []
@@ -273,21 +300,26 @@ def processScoreData(sports, booksList, live):
                         elif team == 'away':
                             away.append(list)
                 for i in range(len(home)):
-                    favorite = min((home[i])['odds'], (away[i])['odds'])
-                    underdog = max((home[i])['odds'], (away[i])['odds'])
+                    homeOdds = (home[i])['odds']
+                    awayOdds = (away[i])['odds']
+                    homeWager, awayWager, ROI = calculateROI(homeOdds, awayOdds)
 
-                    if abs(favorite) < underdog:
+                    if ROI > 0 or LOG_ALL_RESULTS:
                         validResults.append({
                             'sport': game['sport_title'],
                             'date': startTime,
                             'homeTeam': teams['home'],
                             'homeBook': (home[i])['book'],
-                            'homeOdds': str((home[i])['odds']) if (home[i])['odds'] < 0 else '+' + str((home[i])['odds']),
+                            'homeOdds': str(homeOdds) if homeOdds < 0 else '+' + str(homeOdds),
                             'homePoints': str((home[i])['points']) if (home[i])['points'] < 0 else '+' + str((home[i])['points']),
+                            'wagerA': '$' + str(homeWager),
                             'awayTeam': teams['away'],
                             'awayBook': (away[i])['book'],
-                            'awayOdds': str((away[i])['odds']) if (away[i])['odds'] < 0 else '+' + str((away[i])['odds']),
-                            'awayPoints': str((away[i])['points']) if (away[i])['points'] < 0 else '+' + str((away[i])['points'])})
+                            'awayOdds': str(awayOdds) if awayOdds < 0 else '+' + str(awayOdds),
+                            'awayPoints': str((away[i])['points']) if (away[i])['points'] < 0 else '+' + str((away[i])['points']),
+                            'wagerB': '$' + str(awayWager),
+                            'ROI': ROI
+                        })
 
             if ((bestResults['total'])['hasData']):
                 over = []
@@ -299,21 +331,25 @@ def processScoreData(sports, booksList, live):
                         elif opt == 'under':
                             under.append(list)
                 for i in range(len(over)):
-                    favorite = min((over[i])['odds'], (under[i])['odds'])
-                    underdog = max((over[i])['odds'], (under[i])['odds'])
+                    overOdds = (over[i])['odds']
+                    underOdds = (under[i])['odds']
+                    overWager, underWager, ROI = calculateROI(overOdds, underOdds)
 
-                    if abs(favorite) < underdog:
+                    if ROI > 0 or LOG_ALL_RESULTS:
                         validResults.append({
                             'sport': game['sport_title'],
                             'date': startTime,
                             'homeTeam': teams['home'],
                             'overBook': (over[i])['book'],
-                            'overOdds': str((over[i])['odds']) if (over[i])['odds'] < 0 else '+' + str((over[i])['odds']),
+                            'overOdds': str(overOdds) if overOdds < 0 else '+' + str(overOdds),
                             'overPoints': (over[i])['points'],
+                            'wagerA': '$' + str(overWager),
                             'awayTeam': teams['away'],
                             'underBook': (under[i])['book'],
-                            'underOdds': str((under[i])['odds']) if (under[i])['odds'] < 0 else '+' + str((under[i])['odds']),
+                            'underOdds': str(underOdds) if underOdds < 0 else '+' + str(underOdds),
                             'underPoints': (under[i])['points'],
+                            'wagerB': '$' + str(underWager),
+                            'ROI': ROI
                         })
 
     return validResults
@@ -339,6 +375,10 @@ def main():
                 print(res['sport'], "~", res['homeTeam'], "vs.", res['awayTeam'] + ": o" + str(res["overPoints"]), res["overOdds"], "(" + res["overBook"] + "), u" + str(res["underPoints"]), res["underOdds"], "(" + res["underBook"] + ")")
             else:
                 print(res['sport'], "~", res['homeTeam'] + ":", res['homeOdds'], "(" + res['homeBook'] + ") vs. " + res['awayTeam'] + ":", res['awayOdds'], "(" + res['awayBook'] + ")")
+            
+            # print out how much money you should lay on each line and your projected ROI
+            if res['ROI'] > 0:
+                print("     ", res['wagerA'], "     ", res['wagerB'], "  *   ROI: " + str(res['ROI']) + "%")
     else:
         print("No opportunities for hedge betting today")
 
