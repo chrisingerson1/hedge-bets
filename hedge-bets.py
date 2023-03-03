@@ -15,6 +15,7 @@ ODDS_FORMAT = os.getenv('ODDS_FORMAT')
 DATE_FORMAT = os.getenv('DATE_FORMAT')
 
 LOG_ALL_RESULTS = os.getenv('LOG_ALL_RESULTS') == 'True'
+BEST_LINES = os.getenv('BEST_LINES') == 'True' and not LOG_ALL_RESULTS
 
 INITIAL_MONEY = 1000
 
@@ -101,7 +102,7 @@ ALL_SPORTS = [
     ]
 
 TOP_SPORTS_ML = [
-    'baseball_mlb',
+    #'baseball_mlb',
     'basketball_nba',
     'basketball_ncaab',
     'icehockey_nhl'
@@ -138,7 +139,7 @@ def getEventResponse(sport, eventId, markets):
                                 'oddsFormat': ODDS_FORMAT,
                                 'dateFormat': DATE_FORMAT})
 
-def processML(book, outcomes, teams, bestBook, bestResults):
+def processML(book, outcomes, teams, bestBook):
     homeIdx = 0 if teams['home'] == (outcomes[0])['name'] else 1
     awayIdx = 1 if homeIdx == 0 else 0
     odds = {'home': (outcomes[homeIdx])['price'],
@@ -150,12 +151,7 @@ def processML(book, outcomes, teams, bestBook, bestResults):
     if odds['away'] > (bestBook['away'])['odds']:
         bestBook['away'] = {'book': book, 'odds': odds['away']}
 
-    bestResults['hasData'] = True
-
-    bestResults['favorite'] = min((bestBook['home'])['odds'], (bestBook['away'])['odds'])
-    bestResults['underdog'] = max((bestBook['home'])['odds'], (bestBook['away'])['odds'])
-
-    return bestResults
+    return True
 
 def findBestLineSpread(bestBook, pointsList):
     for line in range(len(bestBook['pointsList'])):
@@ -188,7 +184,7 @@ def addPointsValues(currentBook, outcome, pointList, bestBookLines, reverse):
 
     return pointList, bestBookLines
 
-def processSpread(currentBook, outcomes, teams, bestBook, bestResults, pointsList):
+def processSpread(currentBook, outcomes, teams, bestBook, pointsList):
     homeIdx = 0 if teams['home'] == (outcomes[0])['name'] else 1
     awayIdx = 1 if homeIdx == 0 else 0
 
@@ -200,11 +196,9 @@ def processSpread(currentBook, outcomes, teams, bestBook, bestResults, pointsLis
     (bestBook['home'])['bestLine'] = findBestLineSpread(bestBook['home'], pointsList['home'])
     (bestBook['away'])['bestLine'] = findBestLineSpread(bestBook['away'], pointsList['away'])
 
-    bestResults['hasData'] = True
+    return True
 
-    return bestResults
-
-def processTotal(currentBook, outcomes, bestBook, bestResults, pointsList):
+def processTotal(currentBook, outcomes, bestBook, pointsList):
     overIdx = 0 if (outcomes[0])['name'] == 'Over' else 1
     underIdx = 1 if overIdx == 0 else 1
 
@@ -216,9 +210,7 @@ def processTotal(currentBook, outcomes, bestBook, bestResults, pointsList):
     (bestBook['over'])['bestLine'] = findBestLineSpread(bestBook['over'], pointsList['over'])
     (bestBook['under'])['bestLine'] = findBestLineSpread(bestBook['under'], pointsList['under'])
 
-    bestResults['hasData'] = True
-
-    return bestResults
+    return True
 
 def processScoreData(sports, booksList, live):
     validResults = []
@@ -237,8 +229,8 @@ def processScoreData(sports, booksList, live):
                                'away': {'book': '', 'odds': float('-inf')},},
                         'spread': {'home': {'pointsList': [],
                                             'bestLine': {'book': '',
-                                                        'odds': float('-inf'),
-                                                        'points': float('-inf')}},
+                                                         'odds': float('-inf'),
+                                                         'points': float('-inf')}},
                                    'away': {'pointsList': [],
                                             'bestLine': {'book': '',
                                                          'odds': float('-inf'),
@@ -252,9 +244,9 @@ def processScoreData(sports, booksList, live):
                                                          'odds': float('-inf'),
                                                          'points': float('-inf')}}}}
 
-            bestResults = {'ml': {'hasData': False},
-                           'spread': {'hasData': False},
-                           'total': {'hasData': False}}
+            hasData = {'ml': False,
+                       'spread': False,
+                       'total': False}
 
             pointsList = {'spread': {'home': [], 'away': []},
                           'total': {'over': [], 'under': []}}
@@ -264,13 +256,13 @@ def processScoreData(sports, booksList, live):
                     markets = book['markets']
                     for market in markets:
                         if market['key'] == 'h2h':
-                            bestResults['ml'] = processML(book['title'], market['outcomes'], teams, bestBook['ml'], bestResults['ml'])
+                            hasData['ml'] = processML(book['title'], market['outcomes'], teams, bestBook['ml'])
                         elif market['key'] == 'spreads':
-                            bestResults['spread'] = processSpread(book['title'], market['outcomes'], teams, bestBook['spread'], bestResults['spread'], pointsList['spread'])
+                            hasData['spread'] = processSpread(book['title'], market['outcomes'], teams, bestBook['spread'], pointsList['spread'])
                         elif market['key'] == 'totals':
-                            bestResults['totals'] = processTotal(book['title'], market['outcomes'], bestBook['total'], bestResults['total'], pointsList['total'])
+                            hasData['total'] = processTotal(book['title'], market['outcomes'], bestBook['total'], pointsList['total'])
 
-            if ((bestResults['ml'])['hasData']):
+            if hasData['ml']:
                 homeOdds = ((bestBook['ml'])['home'])['odds']
                 awayOdds = ((bestBook['ml'])['away'])['odds']
                 homeWager, awayWager, ROI = calculateROI(homeOdds, awayOdds)
@@ -290,74 +282,109 @@ def processScoreData(sports, booksList, live):
                         'ROI': ROI
                     })
 
-            if ((bestResults['spread'])['hasData']):
-                home = []
-                away = []
-                for team in bestBook['spread']:
-                    for list in ((bestBook['spread'])[team])['pointsList']:
-                        if team == 'home':
-                            home.append(list)
-                        elif team == 'away':
-                            away.append(list)
-                for i in range(len(home)):
-                    homeOdds = (home[i])['odds']
-                    awayOdds = (away[i])['odds']
-                    homeWager, awayWager, ROI = calculateROI(homeOdds, awayOdds)
+            if hasData['spread']:
+                if not BEST_LINES:
+                    home = []
+                    away = []
+                    for team in bestBook['spread']:
+                        for list in ((bestBook['spread'])[team])['pointsList']:
+                            if team == 'home':
+                                home.append(list)
+                            elif team == 'away':
+                                away.append(list)
+                    for i in range(len(home)):
+                        homeOdds = (home[i])['odds']
+                        awayOdds = (away[i])['odds']
+                        homeWager, awayWager, ROI = calculateROI(homeOdds, awayOdds)
 
-                    if ROI > 0 or LOG_ALL_RESULTS:
-                        validResults.append({
-                            'sport': game['sport_title'],
-                            'date': startTime,
-                            'homeTeam': teams['home'],
-                            'homeBook': (home[i])['book'],
-                            'homeOdds': str(homeOdds) if homeOdds < 0 else '+' + str(homeOdds),
-                            'homePoints': str((home[i])['points']) if (home[i])['points'] < 0 else '+' + str((home[i])['points']),
-                            'wagerA': '$' + str(homeWager),
-                            'awayTeam': teams['away'],
-                            'awayBook': (away[i])['book'],
-                            'awayOdds': str(awayOdds) if awayOdds < 0 else '+' + str(awayOdds),
-                            'awayPoints': str((away[i])['points']) if (away[i])['points'] < 0 else '+' + str((away[i])['points']),
-                            'wagerB': '$' + str(awayWager),
-                            'ROI': ROI
-                        })
+                        if ROI > 0 or LOG_ALL_RESULTS:
+                            validResults.append({
+                                'sport': game['sport_title'],
+                                'date': startTime,
+                                'homeTeam': teams['home'],
+                                'homeBook': (home[i])['book'],
+                                'homeOdds': str(homeOdds) if homeOdds < 0 else '+' + str(homeOdds),
+                                'homePoints': str((home[i])['points']) if (home[i])['points'] < 0 else '+' + str((home[i])['points']),
+                                'wagerA': '$' + str(homeWager),
+                                'awayTeam': teams['away'],
+                                'awayBook': (away[i])['book'],
+                                'awayOdds': str(awayOdds) if awayOdds < 0 else '+' + str(awayOdds),
+                                'awayPoints': str((away[i])['points']) if (away[i])['points'] < 0 else '+' + str((away[i])['points']),
+                                'wagerB': '$' + str(awayWager),
+                                'ROI': ROI
+                            })
+                else:
+                    homeBestLine = ((bestBook['spread'])['home'])['bestLine']
+                    awayBestLine = ((bestBook['spread'])['away'])['bestLine']
+                    validResults.append({
+                        'sport': game['sport_title'],
+                        'date': startTime,
+                        'homeTeam': teams['home'],
+                        'homeBook': homeBestLine['book'],
+                        'homeOdds': str(homeBestLine['odds']) if homeBestLine['odds'] < 0 else '+' + str(homeBestLine['odds']),
+                        'homePoints': str(homeBestLine['points']) if homeBestLine['points'] < 0 else '+' + str(homeBestLine['points']),
+                        'awayTeam': teams['away'],
+                        'awayBook': awayBestLine['book'],
+                        'awayOdds': str(awayBestLine['odds']) if awayBestLine['odds'] < 0 else '+' + str(awayBestLine['odds']),
+                        'awayPoints': str(awayBestLine['points']) if awayBestLine['points'] < 0 else '+' + str(awayBestLine['points']),
+                        'ROI': 0
+                    })
 
-            if ((bestResults['total'])['hasData']):
-                over = []
-                under = []
-                for opt in bestBook['total']:
-                    for list in ((bestBook['total'])[opt])['pointsList']:
-                        if opt == 'over':
-                            over.append(list)
-                        elif opt == 'under':
-                            under.append(list)
-                for i in range(len(over)):
-                    overOdds = (over[i])['odds']
-                    underOdds = (under[i])['odds']
-                    overWager, underWager, ROI = calculateROI(overOdds, underOdds)
+            if hasData['total']:
+                if not BEST_LINES:
+                    over = []
+                    under = []
+                    for opt in bestBook['total']:
+                        for list in ((bestBook['total'])[opt])['pointsList']:
+                            if opt == 'over':
+                                over.append(list)
+                            elif opt == 'under':
+                                under.append(list)
+                    for i in range(len(over)):
+                        overOdds = (over[i])['odds']
+                        underOdds = (under[i])['odds']
+                        overWager, underWager, ROI = calculateROI(overOdds, underOdds)
 
-                    if ROI > 0 or LOG_ALL_RESULTS:
-                        validResults.append({
-                            'sport': game['sport_title'],
-                            'date': startTime,
-                            'homeTeam': teams['home'],
-                            'overBook': (over[i])['book'],
-                            'overOdds': str(overOdds) if overOdds < 0 else '+' + str(overOdds),
-                            'overPoints': (over[i])['points'],
-                            'wagerA': '$' + str(overWager),
-                            'awayTeam': teams['away'],
-                            'underBook': (under[i])['book'],
-                            'underOdds': str(underOdds) if underOdds < 0 else '+' + str(underOdds),
-                            'underPoints': (under[i])['points'],
-                            'wagerB': '$' + str(underWager),
-                            'ROI': ROI
-                        })
+                        if ROI > 0 or LOG_ALL_RESULTS:
+                            validResults.append({
+                                'sport': game['sport_title'],
+                                'date': startTime,
+                                'homeTeam': teams['home'],
+                                'overBook': (over[i])['book'],
+                                'overOdds': str(overOdds) if overOdds < 0 else '+' + str(overOdds),
+                                'overPoints': (over[i])['points'],
+                                'wagerA': '$' + str(overWager),
+                                'awayTeam': teams['away'],
+                                'underBook': (under[i])['book'],
+                                'underOdds': str(underOdds) if underOdds < 0 else '+' + str(underOdds),
+                                'underPoints': (under[i])['points'],
+                                'wagerB': '$' + str(underWager),
+                                'ROI': ROI
+                            })
+                else:
+                    overBestLine = ((bestBook['total'])['over'])['bestLine']
+                    underBestLine = ((bestBook['total'])['under'])['bestLine']
+                    validResults.append({
+                        'sport': game['sport_title'],
+                        'date': startTime,
+                        'homeTeam': teams['home'],
+                        'overBook': overBestLine['book'],
+                        'overOdds': str(overBestLine['odds']) if overBestLine['odds'] < 0 else '+' + str(overBestLine['odds']),
+                        'overPoints': str(overBestLine['points']),
+                        'awayTeam': teams['away'],
+                        'underBook': underBestLine['book'],
+                        'underOdds': str(underBestLine['odds']) if underBestLine['odds'] < 0 else '+' + str(underBestLine['odds']),
+                        'underPoints': str(underBestLine['points']),
+                        'ROI': 0
+                    })
 
     return validResults
 
 def main():
     scoresList = []
-    for sport in TOP_SPORTS_ML:
-        scoresList.append(getScoresResponse(sport, 'h2h'))
+    if not BEST_LINES:
+        for sport in TOP_SPORTS_ML:
+            scoresList.append(getScoresResponse(sport, 'h2h'))
     for sport in TOP_SPORTS:
         scoresList.append(getScoresResponse(sport, 'spreads'))
         scoresList.append(getScoresResponse(sport, 'totals'))
