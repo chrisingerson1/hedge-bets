@@ -8,6 +8,15 @@ import pytz
 
 import math
 
+from enum import Enum
+
+from US_Books import *
+
+class GameMode(Enum):
+    HEDGE_BET = 1,
+    BEST_LINES = 2,
+    SHOW_ALL = 3
+
 load_dotenv()
 API_KEY = os.getenv('API_KEY')
 REGIONS = os.getenv('REGIONS')
@@ -19,58 +28,68 @@ BEST_LINES = os.getenv('BEST_LINES') == 'True' and not LOG_ALL_RESULTS
 
 INITIAL_MONEY = 1000
 
-US_Books = ["barstool", "betonlineag", "betfair", "betmgm", "betrivers", "betus", "bovada",
-            "circasports", "draftkings", "fanduel", "foxbet", "lowvig", "mybookieag", "pointsbetus",
-            "sugarhouse", "superbook", "twinspires", "unibet_us", "williamhill_us", "wynnbet"]
-
-MA_Books = ["barstool", "betmgm", "draftkings", "fanduel", "williamhill_us", "wynnbet"]
-
-ALL_SPORTS_ML = [
+TOP_SPORTS_LIST = [
+    'americanfootball_nfl',
     'americanfootball_ncaaf',
-    'americanfootball_xfl',
-    'aussierules_afl',
     'baseball_mlb',
-    'basketball_euroleague',
     'basketball_nba',
     'basketball_ncaab',
-    'cricket_ipl',
-    'cricket_odi',
-    'cricket_psl',
     'icehockey_nhl',
-    'icehockey_sweden_allsvenskan',
-    'icehockey_sweden_hockey_league',
     'mma_mixed_martial_arts',
-    ]
+    'soccer_epl',
+]
 
-ALL_SPORTS = [
-    'americanfootball_ncaaf',
+TOP_SPORTS_PRINT = [
+    "American Football - National Football League (NFL)",
+    "American Football - NCAA Football",
+    "Baseball          - Major League Baseball (MLB)",
+    "Basketball        - National Basketball Association (NBA)",
+    "Basketball        - NCAA Men's Basketball",
+    "Ice Hockey        - National Hockey League (NHL)",
+    "MMA               - Mixed Martial Arts",
+    "Soccer            - English Premier League",
+]
+
+OTHER_SPORTS_LIST = [
+    'americanfootball_cfl',
+    'americanfootball_nfl_preseason',
     'americanfootball_xfl',
     'aussierules_afl',
-    'baseball_mlb',
+    'baseball_mlb_preseason',
     'basketball_euroleague',
-    'basketball_nba',
-    'basketball_ncaab',
+    'basketball_nba_preseason',
+    'basketball_wnba',
+    'cricket_asia_cup',
+    'cricket_big_bash',
+    'cricket_caribbean_premier_league',
+    'cricket_icc_world_cup',
+    'cricket_international_t20',
     'cricket_ipl',
     'cricket_odi',
     'cricket_psl',
     'cricket_test_match',
-    'icehockey_nhl',
+    'cricket_the_hundred',
     'icehockey_sweden_allsvenskan',
     'icehockey_sweden_hockey_league',
-    'mma_mixed_martial_arts',
     'rugbyleague_nrl',
+    'soccer_africa_cup_of_nations',
     'soccer_argentina_primera_division',
     'soccer_australia_aleague',
     'soccer_austria_bundesliga',
     'soccer_belgium_first_div',
+    'soccer_brazil_campeonato',
+    'soccer_brazil_serie_b',
     'soccer_chile_campeonato',
+    'soccer_china_superleague',
     'soccer_conmebol_copa_libertadores',
     'soccer_denmark_superliga',
     'soccer_efl_champ',
+    'soccer_england_efl_cup',
     'soccer_england_league1',
     'soccer_england_league2',
-    'soccer_epl',
     'soccer_fa_cup',
+    'soccer_fifa_world_cup',
+    'soccer_finland_veikkausliiga',
     'soccer_france_ligue_one',
     'soccer_france_ligue_two',
     'soccer_germany_bundesliga',
@@ -87,6 +106,7 @@ ALL_SPORTS = [
     'soccer_norway_eliteserien',
     'soccer_poland_ekstraklasa',
     'soccer_portugal_primeira_liga',
+    'soccer_russia_premier_league',
     'soccer_spain_la_liga',
     'soccer_spain_segunda_division',
     'soccer_spl',
@@ -98,16 +118,44 @@ ALL_SPORTS = [
     'soccer_uefa_europa_conference_league',
     'soccer_uefa_europa_league',
     'soccer_uefa_nations_league',
-    'soccer_usa_mls'
-    ]
+    'soccer_usa_mls',
+    'tennis_atp_aus_open_singles',
+    'tennis_atp_french_open',
+    'tennis_atp_us_open',
+    'tennis_atp_wimbledon',
+    'tennis_wta_aus_open_singles',
+    'tennis_wta_french_open',
+    'tennis_wta_us_open',
+    'tennis_wta_wimbledon'
+]
 
-TOP_SPORTS_ML = [
-    #'baseball_mlb',
-    'basketball_nba',
-    'basketball_ncaab',
-    'icehockey_nhl'
-    ]
-TOP_SPORTS = TOP_SPORTS_ML + ['soccer_epl']
+OTHER_SPORTS_PRINT = [
+    "Canadian Football   - Canadian Football League (CFL)",
+    "American Football   - National Football League Preseason (NFL Preseason)",
+    "American Football   - Xtreme Football League (XFL)",
+    "Australian Football - Australian Football League (AFL)",
+    "Baseball            - Major League Baseball Preseason (MLB Spring Training)",
+    "Basketball          - Euroleague",
+    "Basketball          - National Basketball Association Preseason (NBA Preseason)",
+    "Basketball          - Women's National Basketball Association (WNBA)",
+    "Cricket             - Asia Cup",
+    "Cricket             - Big Bash",
+    "Cricket             - Caribbean Premier League",
+    "Cricket             - Men's ICC World Cup",
+    "Cricket             - Men's International Twenty20",
+    "Cricket             - Indian Premier League",
+    "Cricket             - One Day Internationals",
+    "Cricket             - Pakistan Super League",
+    "Cricket             - International Test Matches",
+    "Cricket             - The Hundred",
+    "Ice Hockey          - Allsvenskan (Sweden)",
+    "Ice Hockey          - Swedish Hockey League",
+    "Rugby               - National Rugby League (NRL)",
+    "Soccer"
+]
+
+ALL_SPORTS_LIST = TOP_SPORTS_LIST + OTHER_SPORTS_LIST
+ALL_SPORTS_PRINT = TOP_SPORTS_PRINT + OTHER_SPORTS_PRINT
 
 def decimalOdds(odds):
     return 1 + 100/math.fabs(odds) if odds < 0 else 1 + odds/100.0
@@ -381,18 +429,64 @@ def processScoreData(sports, booksList, live):
     return validResults
 
 def main():
+    print('*** Welcome to Beat the Bookie ***')
+    # initialize variables to for bookmakers
+    booksList = []
+    selectedBooks = ""
+    
+    state = input("Please enter a two-letter state abbreviation, or type 'MANUAL' to manually select your books: ")
+    if state != 'MANUAL':
+        # user has provided a two-letter state to fetch the list of available books
+        booksList = globals().get(state, "Please enter a valid 2-letter state abbreviation")
+        if state != 'ALL_BOOKS':
+            offshore = input("Would you like to include offshore books? Type 'y' or 'n': ")
+            if offshore == 'y':
+                booksList += OFFSHORE_BOOKS
+        for i in range(len(booksList)):
+            # create a text block that says which books we are using
+            selectedBooks += Books_Print[booksList[i]] + ", "
+    else:
+        for i in range(len(Books_Print)):
+            # print full list of books
+            print(i+1, Books_Print[i])
+        manual_books = input("Select which books you would like to load in, separated by commas: ")
+        # separate user list from text string into list
+        manual_books = manual_books.split(",")
+        for b in manual_books:
+            # convert list items to integers
+            try:
+                bookIdx = int(b)-1
+                if bookIdx >= 0 and bookIdx <= len(Books_Print):
+                    selectedBooks += Books_Print[bookIdx] + ", "
+                    booksList.append(bookIdx)
+                else:
+                    print("Improper book index " + str(bookIdx+1) + ", skipping...")
+            except ValueError:
+                print("Improper value entered: " + "'" + b + "'" + ", skipping...")
+    
+    # sort the composite list of bookmakers by alphabetical order
+    booksList.sort()
+
+    # chop off the final ", "
+    selectedBooks = selectedBooks[0:-2]
+    print("List of books loaded:", selectedBooks)
+    #for i in range(len(booksList)):
+    #    print(Books_Print[booksList[i]])
+
+    gameMode = input("Please select a game mode")
+
     scoresList = []
-    if not BEST_LINES:
-        for sport in TOP_SPORTS_ML:
-            scoresList.append(getScoresResponse(sport, 'h2h'))
-    for sport in TOP_SPORTS:
-        scoresList.append(getScoresResponse(sport, 'spreads'))
-        scoresList.append(getScoresResponse(sport, 'totals'))
+    #if not BEST_LINES:
+        #for sport in TOP_SPORTS_LIST:
+            #scoresList.append(getScoresResponse(sport, 'h2h'))
+    #for sport in TOP_SPORTS_LIST:
+    #    scoresList.append(getScoresResponse(sport, 'spreads'))
+        #scoresList.append(getScoresResponse(sport, 'totals'))
 
-    if len(scoresList) == 0:
-        return
+    #if len(scoresList) == 0:
+    #    return
 
-    validScoreResults = processScoreData(scoresList, US_Books, True)
+    validScoreResults = processScoreData(scoresList, booksList, True)
 
     if (validScoreResults):
         for res in validScoreResults:
