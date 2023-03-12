@@ -3,19 +3,20 @@ from dotenv import load_dotenv
 
 import requests
 from datetime import timezone
+import time
 import datetime
 import pytz
 
 import math
 
-from enum import Enum
-
 from US_Books import *
 
-class GameMode(Enum):
-    HEDGE_BET = 1,
-    BEST_LINES = 2,
-    SHOW_ALL = 3
+# variable to store user selected game
+SELECTED_GAME = 0
+
+HEDGE_BET = 1
+BEST_LINES = 2
+SHOW_ALL = 3
 
 load_dotenv()
 API_KEY = os.getenv('API_KEY')
@@ -160,7 +161,7 @@ ALL_SPORTS_PRINT = TOP_SPORTS_PRINT + OTHER_SPORTS_PRINT
 def decimalOdds(odds):
     return 1 + 100/math.fabs(odds) if odds < 0 else 1 + odds/100.0
 
-def calculateROI(oddsA, oddsB):
+def calculateROI_2way(oddsA, oddsB):
     oddsA_decimal = decimalOdds(oddsA)
     oddsB_decimal = decimalOdds(oddsB)
     oddsA_wager = round((oddsB_decimal / (oddsA_decimal + oddsB_decimal)) * INITIAL_MONEY, 2)
@@ -168,6 +169,17 @@ def calculateROI(oddsA, oddsB):
     ROI = round(((((oddsA_wager*oddsA_decimal) / float(INITIAL_MONEY)) - 1) * 100), 2)
 
     return oddsA_wager, oddsB_wager, ROI
+
+def calculateROI_3way(oddsA, oddsB, oddsC):
+    oddsA_decimal = decimalOdds(oddsA)
+    oddsB_decimal = decimalOdds(oddsB)
+    oddsC_decimal = decimalOdds(oddsC)
+    oddsA_wager = round(INITIAL_MONEY / (1 + (oddsA_decimal/oddsB_decimal) + (oddsA_decimal/oddsC_decimal)), 2)
+    oddsB_wager = round(INITIAL_MONEY / (1 + (oddsB_decimal/oddsA_decimal) + (oddsB_decimal/oddsC_decimal)), 2)
+    oddsC_wager = round((INITIAL_MONEY - oddsA_wager - oddsB_wager), 2)
+    ROI = round(((((oddsA_wager*oddsA_decimal) / float(INITIAL_MONEY)) - 1) * 100), 2)
+
+    return oddsA_wager, oddsB_wager, oddsC_wager, ROI
 
 def getScoresResponse(sport, markets):
     return requests.get('https://api.the-odds-api.com/v4/sports/' + sport + '/odds/',
@@ -190,14 +202,24 @@ def getEventResponse(sport, eventId, markets):
 def processML(book, outcomes, teams, bestBook):
     homeIdx = 0 if teams['home'] == (outcomes[0])['name'] else 1
     awayIdx = 1 if homeIdx == 0 else 0
+    
     odds = {'home': (outcomes[homeIdx])['price'],
             'away': (outcomes[awayIdx])['price']}
+
+    # has a DRAW field
+    if len(outcomes) == 3:
+        drawIdx = 2
+        odds['draw'] = (outcomes[drawIdx])['price']
 
     if odds['home'] > (bestBook['home'])['odds']:
         bestBook['home'] = {'book': book, 'odds': odds['home']}
 
     if odds['away'] > (bestBook['away'])['odds']:
         bestBook['away'] = {'book': book, 'odds': odds['away']}
+
+    if 'draw' in odds.keys():
+        if odds['draw'] > (bestBook['draw'])['odds']:
+            bestBook['draw'] = {'book': book, 'odds': odds['draw']}
 
     return True
 
@@ -273,8 +295,11 @@ def processScoreData(sports, booksList, live):
 
             teams = {'home': game['home_team'], 'away': game['away_team']}
 
-            bestBook = {'ml': {'home': {'book': '', 'odds': float('-inf')},
-                               'away': {'book': '', 'odds': float('-inf')},},
+            bestBook = {'ml': {'2-way': {'home': {'book': '', 'odds': float('-inf')},
+                                         'away': {'book': '', 'odds': float('-inf')}},
+                               '3-way': {'home': {'book': '', 'odds': float('-inf')},
+                                         'away': {'book': '', 'odds': float('-inf')},
+                                         'draw': {'book': '', 'odds': float('-inf')}}},
                         'spread': {'home': {'pointsList': [],
                                             'bestLine': {'book': '',
                                                          'odds': float('-inf'),
@@ -292,7 +317,8 @@ def processScoreData(sports, booksList, live):
                                                          'odds': float('-inf'),
                                                          'points': float('-inf')}}}}
 
-            hasData = {'ml': False,
+            hasData = {'ml': {'2-way': False,
+                              '3-way': False},
                        'spread': False,
                        'total': False}
 
@@ -304,29 +330,56 @@ def processScoreData(sports, booksList, live):
                     markets = book['markets']
                     for market in markets:
                         if market['key'] == 'h2h':
-                            hasData['ml'] = processML(book['title'], market['outcomes'], teams, bestBook['ml'])
+                            if len(market['outcomes']) == 2:
+                                (hasData['ml'])['2-way'] = processML(book['title'], market['outcomes'], teams, (bestBook['ml'])['2-way'])
+                            elif len(market['outcomes']) == 3:
+                                (hasData['ml'])['3-way'] = processML(book['title'], market['outcomes'], teams, (bestBook['ml'])['3-way'])
                         elif market['key'] == 'spreads':
                             hasData['spread'] = processSpread(book['title'], market['outcomes'], teams, bestBook['spread'], pointsList['spread'])
                         elif market['key'] == 'totals':
                             hasData['total'] = processTotal(book['title'], market['outcomes'], bestBook['total'], pointsList['total'])
 
-            if hasData['ml']:
-                homeOdds = ((bestBook['ml'])['home'])['odds']
-                awayOdds = ((bestBook['ml'])['away'])['odds']
-                homeWager, awayWager, ROI = calculateROI(homeOdds, awayOdds)
+            if (hasData['ml'])['2-way']:
+                homeOdds = (((bestBook['ml'])['2-way'])['home'])['odds']
+                awayOdds = (((bestBook['ml'])['2-way'])['away'])['odds']
+                homeWager, awayWager, ROI = calculateROI_2way(homeOdds, awayOdds)
+                    
+                if ROI > 0 or LOG_ALL_RESULTS:
+                    validResults.append({
+                        'sport': game['sport_title'],
+                        'date': startTime,
+                        'homeTeam': teams['home'],
+                        'homeBook': (((bestBook['ml'])['2-way'])['home'])['book'],
+                        'homeOdds': str(homeOdds) if homeOdds < 0 else '+' + str(homeOdds),
+                        'wagerA': '$' + str(homeWager),
+                        'awayTeam': teams['away'],
+                        'awayBook': (((bestBook['ml'])['2-way'])['away'])['book'],
+                        'awayOdds': str(awayOdds) if awayOdds < 0 else '+' + str(awayOdds),
+                        'wagerB': '$' + str(awayWager),
+                        'ROI': ROI
+                    })
+
+            if (hasData['ml'])['3-way']:
+                homeOdds = (((bestBook['ml'])['3-way'])['home'])['odds']
+                awayOdds = (((bestBook['ml'])['3-way'])['away'])['odds']
+                drawOdds = (((bestBook['ml'])['3-way'])['draw'])['odds']
+                homeWager, awayWager, drawWager, ROI = calculateROI_3way(homeOdds, awayOdds, drawOdds)
 
                 if ROI > 0 or LOG_ALL_RESULTS:
                     validResults.append({
                         'sport': game['sport_title'],
                         'date': startTime,
                         'homeTeam': teams['home'],
-                        'homeBook': ((bestBook['ml'])['home'])['book'],
+                        'homeBook': (((bestBook['ml'])['3-way'])['home'])['book'],
                         'homeOdds': str(homeOdds) if homeOdds < 0 else '+' + str(homeOdds),
                         'wagerA': '$' + str(homeWager),
                         'awayTeam': teams['away'],
-                        'awayBook': ((bestBook['ml'])['away'])['book'],
+                        'awayBook': (((bestBook['ml'])['3-way'])['away'])['book'],
                         'awayOdds': str(awayOdds) if awayOdds < 0 else '+' + str(awayOdds),
                         'wagerB': '$' + str(awayWager),
+                        'drawBook': (((bestBook['ml'])['3-way'])['draw'])['book'],
+                        'drawOdds': str(drawOdds) if drawOdds < 0 else '+' + str(drawOdds),
+                        'wagerC': '$' + str(drawWager),
                         'ROI': ROI
                     })
 
@@ -343,7 +396,7 @@ def processScoreData(sports, booksList, live):
                     for i in range(len(home)):
                         homeOdds = (home[i])['odds']
                         awayOdds = (away[i])['odds']
-                        homeWager, awayWager, ROI = calculateROI(homeOdds, awayOdds)
+                        homeWager, awayWager, ROI = calculateROI_2way(homeOdds, awayOdds)
 
                         if ROI > 0 or LOG_ALL_RESULTS:
                             validResults.append({
@@ -391,7 +444,7 @@ def processScoreData(sports, booksList, live):
                     for i in range(len(over)):
                         overOdds = (over[i])['odds']
                         underOdds = (under[i])['odds']
-                        overWager, underWager, ROI = calculateROI(overOdds, underOdds)
+                        overWager, underWager, ROI = calculateROI_2way(overOdds, underOdds)
 
                         if ROI > 0 or LOG_ALL_RESULTS:
                             validResults.append({
@@ -430,39 +483,48 @@ def processScoreData(sports, booksList, live):
 
 def main():
     print('*** Welcome to Beat the Bookie ***')
+    
+    ############ CHOOSE YOUR BOOKS ############
     # initialize variables to for bookmakers
     booksList = []
     selectedBooks = ""
     
-    state = input("Please enter a two-letter state abbreviation, or type 'MANUAL' to manually select your books: ")
-    if state != 'MANUAL':
-        # user has provided a two-letter state to fetch the list of available books
-        booksList = globals().get(state, "Please enter a valid 2-letter state abbreviation")
-        if state != 'ALL_BOOKS':
-            offshore = input("Would you like to include offshore books? Type 'y' or 'n': ")
-            if offshore == 'y':
-                booksList += OFFSHORE_BOOKS
-        for i in range(len(booksList)):
-            # create a text block that says which books we are using
-            selectedBooks += Books_Print[booksList[i]] + ", "
-    else:
-        for i in range(len(Books_Print)):
-            # print full list of books
-            print(i+1, Books_Print[i])
-        manual_books = input("Select which books you would like to load in, separated by commas: ")
-        # separate user list from text string into list
-        manual_books = manual_books.split(",")
-        for b in manual_books:
-            # convert list items to integers
-            try:
-                bookIdx = int(b)-1
-                if bookIdx >= 0 and bookIdx <= len(Books_Print):
-                    selectedBooks += Books_Print[bookIdx] + ", "
-                    booksList.append(bookIdx)
-                else:
-                    print("Improper book index " + str(bookIdx+1) + ", skipping...")
-            except ValueError:
-                print("Improper value entered: " + "'" + b + "'" + ", skipping...")
+    # loop until we get a valid selection
+    while 1:
+        state = input("Please enter a two-letter state abbreviation, or type 'MANUAL' to manually select your books: ")
+        state = state.upper()
+        if state != 'MANUAL':
+            # user has provided a two-letter state to fetch the list of available books
+            booksList = globals().get(state, "Please enter a valid 2-letter state abbreviation")
+            if booksList == "Please enter a valid 2-letter state abbreviation":
+                print(booksList)
+                continue
+            if state != 'ALL_BOOKS':
+                offshore = input("Would you like to include offshore books? Type 'y' or 'n': ")
+                if offshore.lower() == 'y':
+                    booksList += OFFSHORE_BOOKS
+            for i in range(len(booksList)):
+                # create a text block that says which books we are using
+                selectedBooks += Books_Print[booksList[i]] + ", "
+        else:
+            for i in range(len(Books_Print)):
+                # print full list of books
+                print(i+1, Books_Print[i])
+            manual_books = input("Select which books you would like to load in, separated by commas: ")
+            # separate user list from text string into list
+            manual_books = manual_books.split(",")
+            for b in manual_books:
+                # convert list items to integers
+                try:
+                    bookIdx = int(b)-1
+                    if bookIdx >= 0 and bookIdx <= len(Books_Print):
+                        selectedBooks += Books_Print[bookIdx] + ", "
+                        booksList.append(bookIdx)
+                    else:
+                        print("Improper book index " + str(bookIdx+1) + ", skipping...")
+                except ValueError:
+                    print("Improper value entered: " + "'" + b + "'" + ", skipping...")
+        break
     
     # sort the composite list of bookmakers by alphabetical order
     booksList.sort()
@@ -470,23 +532,40 @@ def main():
     # chop off the final ", "
     selectedBooks = selectedBooks[0:-2]
     print("List of books loaded:", selectedBooks)
-    #for i in range(len(booksList)):
-    #    print(Books_Print[booksList[i]])
+    time.sleep(1)
+    print()
 
-    gameMode = input("Please select a game mode")
+    ############ CHOOSE YOUR SPORTS ############
 
+    ############ CHOOSE YOUR GAME MODE ############
+    print("1 HEDGE BETS - Only display results where you have a guaranteed profit")
+    print("2 BEST LINES - Show the most favorable lines for every game")
+    print("3 SHOW ALL - Display all possible lines and their best odds")
+    global SELECTED_GAME
+    while SELECTED_GAME == 0:
+        gameMode = input("Please select a game mode: ")
+        if gameMode == '1' or gameMode.upper() == 'HEDGE BETS':
+            SELECTED_GAME = 1
+        elif gameMode == '2' or gameMode.upper() == 'BEST LINES':
+            SELECTED_GAME = 2
+        elif gameMode == '3' or gameMode.upper() == 'SHOW ALL':
+            SELECTED_GAME = 3
+        else:
+            print("Invalid game mode, try again...")
+
+def main():
     scoresList = []
     #if not BEST_LINES:
-        #for sport in TOP_SPORTS_LIST:
-            #scoresList.append(getScoresResponse(sport, 'h2h'))
-    #for sport in TOP_SPORTS_LIST:
-    #    scoresList.append(getScoresResponse(sport, 'spreads'))
+    #    for sport in TOP_SPORTS_LIST:
+    #        scoresList.append(getScoresResponse(sport, 'h2h'))
+    for sport in TOP_SPORTS_LIST:
+        scoresList.append(getScoresResponse(sport, 'h2h,spreads,totals'))
         #scoresList.append(getScoresResponse(sport, 'totals'))
 
-    #if len(scoresList) == 0:
-    #    return
+    if len(scoresList) == 0:
+        return
 
-    validScoreResults = processScoreData(scoresList, booksList, True)
+    validScoreResults = processScoreData(scoresList, Books, True)
 
     if (validScoreResults):
         for res in validScoreResults:
@@ -495,11 +574,17 @@ def main():
             elif 'overPoints' in res.keys() and 'underPoints' in res.keys():
                 print(res['sport'], "~", res['homeTeam'], "vs.", res['awayTeam'] + ": o" + str(res["overPoints"]), res["overOdds"], "(" + res["overBook"] + "), u" + str(res["underPoints"]), res["underOdds"], "(" + res["underBook"] + ")")
             else:
-                print(res['sport'], "~", res['homeTeam'] + ":", res['homeOdds'], "(" + res['homeBook'] + ") vs. " + res['awayTeam'] + ":", res['awayOdds'], "(" + res['awayBook'] + ")")
+                if 'drawBook' in res.keys():
+                    print(res['sport'], "~", res['homeTeam'] + ":", res['homeOdds'], "(" + res['homeBook'] + ") vs. " + res['awayTeam'] + ":", res['awayOdds'], "(" + res['awayBook'] + "), Draw", res['drawOdds'], "(" + res['drawBook'] + ")")
+                else:
+                    print(res['sport'], "~", res['homeTeam'] + ":", res['homeOdds'], "(" + res['homeBook'] + ") vs. " + res['awayTeam'] + ":", res['awayOdds'], "(" + res['awayBook'] + ")")
             
             # print out how much money you should lay on each line and your projected ROI
             if res['ROI'] > 0:
-                print("     ", res['wagerA'], "     ", res['wagerB'], "  *   ROI: " + str(res['ROI']) + "%")
+                if 'drawBook' in res.keys():
+                    print("     ", res['wagerA'], "     ", res['wagerB'], "     ", res['wagerC'], "  *   ROI: " + str(res['ROI']) + "%")
+                else:
+                    print("     ", res['wagerA'], "     ", res['wagerB'], "  *   ROI: " + str(res['ROI']) + "%")
     else:
         print("No opportunities for hedge betting today")
 
