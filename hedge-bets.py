@@ -19,13 +19,8 @@ LIVE_ONLY = 4
 
 load_dotenv()
 API_KEY = os.getenv('API_KEY')
-REGIONS = os.getenv('REGIONS')
 ODDS_FORMAT = os.getenv('ODDS_FORMAT')
 DATE_FORMAT = os.getenv('DATE_FORMAT')
-
-LOG_ALL_RESULTS = os.getenv('LOG_ALL_RESULTS') == 'True'
-BEST_LINES = os.getenv('BEST_LINES') == 'True' and not LOG_ALL_RESULTS
-LIVEBET_TIMEOUT = int(os.getenv('LIVEBET_TIMEOUT'))
 
 INITIAL_MONEY = 100
 
@@ -401,6 +396,8 @@ def extractData(books, event):
                 'spreads': {'book': [], 'lastUpdate': [], 'homePoint': [], 'homePrice': [], 'awayPoint': [], 'awayPrice': []},
                 'totals': {'book': [], 'lastUpdate': [], 'overPoint': [], 'overPrice': [], 'underPoint': [], 'underPrice': []}}
     
+    isLive = True if currentTime > startTime else False
+
     for b in event['bookmakers']:
         bookKey = b['key']
         if bookKey in booksList:
@@ -443,49 +440,70 @@ def extractData(books, event):
                     (bookData[marketKey])['underPoint'].append((outcomes[idx2])['point'])
                     (bookData[marketKey])['underPrice'].append((outcomes[idx2])['price'])
 
-    return eventId, sport, datetime.datetime.fromtimestamp(startTime), homeTeam, awayTeam, bookData
+    return eventId, sport, datetime.datetime.fromtimestamp(startTime), isLive, homeTeam, awayTeam, bookData
 
-# if SELECTED_MODE is HEDGE_BET
-def hedge(books, sports):
-    regions = 'us'
-    if any(i >= 20 for i in books): regions += ",us2"
-    markets = "h2h,spreads,totals"
+def findBestMLIdx(bookData, key, bestVal, idx, i):
+    if len(bookData[key]) > i:
+        if (bookData[key])[i] > bestVal:
+            bestVal = (bookData[key])[i]
+            idx = i
+    return bestVal, idx
+
+def bestLinesML(bookData):
+    numScores = len(bookData['book'])
+    bestHome = bestAway = bestDraw = -math.inf
+    homeIdx = awayIdx = drawIdx = -1
+    for i in range(numScores):
+        bestHome, homeIdx = findBestMLIdx(bookData, 'homePrice', bestHome, homeIdx, i)
+        bestAway, awayIdx = findBestMLIdx(bookData, 'awayPrice', bestAway, awayIdx, i)
+        bestDraw, drawIdx = findBestMLIdx(bookData, 'drawPrice', bestDraw, drawIdx, i)
     
+    return homeIdx, bestHome, awayIdx, bestAway, drawIdx, bestDraw
+
+# if SELECTED_MODE is HEDGE BET
+def hedge(books, sports, regions, markets):
+    for sport in sports:
+        sportData = getScoresResponse(sport, regions, markets).json()
+
+        for event in sportData:
+            eventID, sportID, startTime, isLive, homeTeam, awayTeam, bookData = extractData(books, event)
+            
+            # Find best lines
+            homeIdx, bestHome, awayIdx, bestAway, drawIdx, bestDraw = bestLinesML(bookData['h2h'])
+            if homeIdx < 0 or awayIdx < 0:
+                continue
+
+            printStr = f"{sportID} ~ {startTime}: {homeTeam} {bestHome if bestHome < 0 else '+' + str(bestHome)} ({((bookData['h2h'])['book'])[homeIdx]}) vs. {awayTeam} {bestAway if bestAway < 0 else '+' + str(bestAway)} ({((bookData['h2h'])['book'])[awayIdx]})"
+            if isLive:
+                printStr = "!! LIVE !! - " + printStr
+
+            if drawIdx < 0:
+                a, b, ROI = calculateROI_2way(bestHome, bestAway)
+                if ROI > 0:
+                    print(f"{printStr} ROI: {ROI}%")
+            else:
+                printStr += f", Draw {bestDraw if bestDraw < 0 else '+' + str(bestDraw)} ({((bookData['h2h'])['book'])[drawIdx]})"
+                a, b, c, ROI = calculateROI_3way(bestHome, bestAway, bestDraw)
+                if ROI > 0:
+                    print(f"{printStr} ROI: {ROI}%")
+
+# if SELECTED_MODE is BEST LINES
+def bestLines(books, sports, regions, markets):
     for sport in sports:
         sportData = getScoresResponse(sport, regions, markets).json()
 
         for event in sportData:
             eventID, sportID, startTime, homeTeam, awayTeam, bookData = extractData(books, event)
-            
+
             # Find best lines
-            numScores = len((bookData['h2h'])['book'])
-            bestHome = bestAway = bestDraw = -math.inf
-            homeIdx = awayIdx = drawIdx = -1
-            for i in range(numScores):
-                if len((bookData['h2h'])['homePrice']) > i:
-                    if ((bookData['h2h'])['homePrice'])[i] > bestHome:
-                        bestHome = ((bookData['h2h'])['homePrice'])[i]
-                        homeIdx = i
-                if len((bookData['h2h'])['awayPrice']) > i:
-                    if ((bookData['h2h'])['awayPrice'])[i] > bestAway:
-                        bestAway = ((bookData['h2h'])['awayPrice'])[i]
-                        awayIdx = i
-                if len((bookData['h2h'])['drawPrice']) > i:
-                    if ((bookData['h2h'])['drawPrice'])[i] > bestDraw:
-                        bestDraw = ((bookData['h2h'])['drawPrice'])[i]
-                        drawIdx = i
-            
+            homeIdx, bestHome, awayIdx, bestAway, drawIdx, bestDraw = bestLinesML(bookData['h2h'])
             if homeIdx < 0 or awayIdx < 0:
                 continue
 
             if drawIdx < 0:
-                a, b, ROI = calculateROI_2way(bestHome, bestAway)
-                if ROI > 0:
-                    print(sportID, startTime, homeTeam, bestHome, ((bookData['h2h'])['book'])[homeIdx], awayTeam, bestAway, ((bookData['h2h'])['book'])[awayIdx], ROI)
+                print(sportID, startTime, homeTeam, bestHome, ((bookData['h2h'])['book'])[homeIdx], awayTeam, bestAway, ((bookData['h2h'])['book'])[awayIdx])
             else:
-                a, b, c, ROI = calculateROI_3way(bestHome, bestAway, bestDraw)
-                if ROI > 0:
-                    print(sportID, startTime, homeTeam, bestHome, ((bookData['h2h'])['book'])[homeIdx], awayTeam, bestAway, ((bookData['h2h'])['book'])[awayIdx], 'Draw', bestDraw, ((bookData['h2h'])['book'])[drawIdx], ROI)
+                print(sportID, startTime, homeTeam, bestHome, ((bookData['h2h'])['book'])[homeIdx], awayTeam, bestAway, ((bookData['h2h'])['book'])[awayIdx], 'Draw', bestDraw, ((bookData['h2h'])['book'])[drawIdx])
 
 def main():
     print('*** Welcome to Beat the Bookie ***')
@@ -583,8 +601,14 @@ def main():
     time.sleep(1)
     print()
 
+    regions = 'us'
+    if any(i >= 20 for i in booksList): regions += ",us2"
+    markets = "h2h,spreads,totals"
+
     if SELECTED_GAME == HEDGE_BET:
-        hedge(booksList, sportsList)
+        hedge(booksList, sportsList, regions, markets)
+    elif SELECTED_GAME == BEST_LINES:
+        bestLines(booksList, sportsList, regions, markets)
 
 
 if __name__ == "__main__":
